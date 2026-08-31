@@ -89,8 +89,8 @@ class DWSConfig(PostgreSQLConfig):
         default="prefer",
         description=(
             "PostgreSQL SSL mode. 'prefer' upgrades automatically when the cluster enforces SSL. "
-            "'verify-full' cannot succeed against the DWS default server certificate, whose CN is "
-            "'server' and which carries no subjectAltName"
+            "'verify-full' is not supported by DWS: the default server certificate has CN 'server' "
+            "and no subjectAltName, so hostname verification cannot match a real endpoint"
         ),
     )
     sslrootcert: Optional[str] = Field(

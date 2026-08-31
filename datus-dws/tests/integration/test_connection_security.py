@@ -3,9 +3,10 @@
 
 """TLS behaviour against a live DWS cluster.
 
-The DWS default server certificate has CN=server and no subjectAltName, so
-verify-full cannot succeed. That is asserted rather than skipped: if a future
-cluster ships a proper certificate, this test tells us the docs need updating.
+Huawei documents that DWS does not support verify-full, and the default server
+certificate shows why: CN=server with no subjectAltName. That is asserted rather
+than skipped, so if a cluster ever ships a per-cluster certificate this test
+tells us the docs need updating.
 """
 
 import os

@@ -41,17 +41,26 @@ omitted. The cluster's default database is normally `gaussdb`.
 | `prefer` (default) | Encrypts when the server offers it; upgrades automatically if the cluster enforces SSL |
 | `require` | Encrypts without verifying the server certificate |
 | `verify-ca` | Verifies the server certificate against `sslrootcert` |
-| `verify-full` | **Cannot succeed** — see below |
+| `verify-full` | **Not supported by DWS** — see below |
 | `disable` | Fails if the cluster has SSL enforcement switched on |
 
-Two things to know about DWS certificates:
+Three things to know about DWS certificates:
 
-- **`verify-full` is not usable.** The default server certificate has `CN=server`
-  and carries no `subjectAltName`, so hostname verification can never match a
-  real endpoint. This is a property of the certificate, not a misconfiguration.
+- **`verify-full` is not supported.** Huawei states this outright — "verify-full:
+  DWS does not support this mode"
+  ([SSL connection settings](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)).
+  The certificate shows why: `CN=server` with no `subjectAltName`, issued once for
+  the product rather than per cluster, so hostname verification can never match a
+  real endpoint.
 - **Use the v2 CA.** The console's `dws_ssl_cert` bundle contains both
   `v1/sslcert/cacert.pem` and `v2/sslcert/cacert.pem`. Only v2 matches the server
   certificate issuer; v1 is `CN=Huawei Equipment CA` and fails verification.
+- **`verify-ca` leaves a residual risk.** It proves the certificate chains to the
+  configured CA, not that you reached the intended cluster — and since the
+  certificate is not per-cluster, any endpoint presenting one from that same CA
+  passes. With `verify-full` unavailable nothing closes this, so treat the
+  endpoint as the trust boundary: reach the cluster over a VPC or a verified fixed
+  EIP rather than trusting `verify-ca` alone on an untrusted network.
 
 `sslrootcert` accepts either a filesystem path or inline PEM content, so a hosted
 deployment can pass an uploaded certificate directly.
