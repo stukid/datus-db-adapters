@@ -1,6 +1,6 @@
 ---
 name: db-starrocks-sql
-description: Generate, review, and understand StarRocks SQL. Use for StarRocks queries, OLAP table DDL, DML, materialized views, catalogs, S3 imports with FILES() or Broker Load, Stream Load, Routine Load, and rewrites where MySQL compatibility, table types, distribution, functions, or loading semantics can affect correctness.
+description: Generate, review, and understand StarRocks SQL. Use for StarRocks queries, OLAP table DDL, DML, materialized views, catalogs, S3/GCS imports with FILES() or Broker Load, Stream Load, Routine Load, and rewrites where MySQL compatibility, table types, distribution, functions, or loading semantics can affect correctness.
 ---
 
 # StarRocks SQL
@@ -40,10 +40,11 @@ Generate StarRocks-compatible SQL from metadata-provided object and column names
 
 ### Choose a loading method
 
-- Prefer `INSERT INTO ... SELECT ... FROM FILES(...)` for ordinary one-off S3 or HDFS imports when the target version supports the file format. It also allows previewing and transforming the source with SQL before writing.
-- Check the server version with `SELECT current_version()`: `FILES()` with Parquet requires 3.1.0+, and CSV (including delimited `.txt` files) requires 3.3+. These capabilities remain available in 4.x; do not assume every 3.x release supports them. Verify other formats and optional properties against the target-version documentation.
+- Prefer `INSERT INTO ... SELECT ... FROM FILES(...)` for ordinary one-off S3, GCS, or HDFS imports when the target version supports the file format. It also allows previewing and transforming the source with SQL before writing.
+- Check the server version with `SELECT current_version()`: `FILES()` with Parquet requires 3.1.0+ (3.2+ for GCS), and CSV (including delimited `.txt` files) requires 3.3+. These capabilities remain available in 4.x; do not assume every 3.x release supports them. Verify other formats and optional properties against the target-version documentation.
 - Preserve an explicitly requested loading method. Choose Broker Load when background/asynchronous execution is needed, or when the source format or server version is unsupported by `FILES()` but supported by Broker Load. A synchronous client timeout is not a reason to blindly resubmit the same data with another method.
-- Both methods read S3 from the StarRocks cluster; they do not require a Datus S3 plugin or a download through the agent. Configure credentials and network access for the cluster, not just the SQL client. Do not assume the client's AWS CLI profile or SQL `${ENV_VAR}` placeholders are automatically forwarded or expanded. Use placeholders in proposed SQL; resolve missing authentication without exposing secrets in the conversation.
+- Configure credentials and network access for the StarRocks cluster, not just the SQL client. Do not assume the client's AWS CLI or gcloud credentials, or SQL `${ENV_VAR}` placeholders, are automatically forwarded or expanded. Use placeholders in proposed SQL; resolve missing authentication without exposing secrets in the conversation.
+- For GCS, use `gs://bucket/object` with either loading method. Authenticate using `"gcp.gcs.use_compute_engine_service_account" = "true"` for a bound GCP VM identity, or the service-account properties `gcp.gcs.service_account_email`, `gcp.gcs.service_account_private_key_id`, and `gcp.gcs.service_account_private_key`; do not copy `aws.s3.*` properties. A public HTTPS download does not prove credential-free `gs://` access. See the [GCS loading guide](https://docs.starrocks.io/docs/loading/objectstorage/gcs/) and [GCS authentication](https://docs.starrocks.io/docs/integrations/csp_auth/authenticate_to_gcs/) for details.
 
 ### FILES() import and validation
 
