@@ -398,10 +398,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                     )
                     # Append indexes after subclass table clauses (e.g. distribution).
                     if object_type == "TABLE" and not ddl.startswith("-- DDL not available"):
-                        indexes = self._get_unique_index_definitions(meta["schema_name"], meta["table_name"])
-                        for index_ddl in indexes:
-                            if index_ddl.rstrip(";") not in ddl:
-                                ddl += f"\n{index_ddl}"
+                        try:
+                            indexes = self._get_unique_index_definitions(meta["schema_name"], meta["table_name"])
+                        except Exception as exc:
+                            logger.warning(
+                                f"Could not read unique indexes for {full_name}; preserving table DDL: {exc}"
+                            )
+                            ddl += "\n-- Additional unique index metadata is unavailable."
+                        else:
+                            for index_ddl in indexes:
+                                if index_ddl.rstrip(";") not in ddl:
+                                    ddl += f"\n{index_ddl}"
                 finally:
                     self._database_var.reset(token)
             except Exception as e:

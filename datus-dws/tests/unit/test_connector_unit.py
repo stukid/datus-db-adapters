@@ -8,6 +8,7 @@ its pure logic exercised without reaching a cluster.
 """
 
 import os
+from unittest.mock import MagicMock
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
@@ -50,6 +51,42 @@ def _config(**overrides):
 
 def _connector(**overrides):
     return DWSConnector(_config(**overrides))
+
+
+# ==================== source DDL ====================
+
+
+def test_table_metadata_preserves_native_ddl_when_index_catalog_fails(monkeypatch):
+    connector = _connector()
+    monkeypatch.setattr(
+        connector,
+        "_get_metadata",
+        lambda *_args: [
+            {
+                "identifier": "reporting.datus_dws_probe.col_hash_compress",
+                "catalog_name": "",
+                "database_name": "reporting",
+                "schema_name": "datus_dws_probe",
+                "table_name": "col_hash_compress",
+                "table_type": "table",
+            }
+        ],
+    )
+    checkout = MagicMock()
+    monkeypatch.setattr(connector, "_conn", checkout)
+    native_result = MagicMock()
+    native_result.fetchall.return_value = [(COLUMN_TABLE_DDL,)]
+    connection = checkout.return_value.__enter__.return_value
+    connection.execute.side_effect = [native_result, RuntimeError("index catalog unavailable")]
+
+    tables = connector.get_tables_with_ddl(
+        database_name="reporting", schema_name="datus_dws_probe", tables=["col_hash_compress"]
+    )
+
+    assert [table["table_name"] for table in tables] == ["col_hash_compress"]
+    assert tables[0]["definition"] == COLUMN_TABLE_DDL + "\n-- Additional unique index metadata is unavailable."
+    assert [call.kwargs["database_name"] for call in checkout.call_args_list] == ["reporting", "reporting"]
+    assert connector.database_name == "gaussdb"
 
 
 # ==================== construction ====================

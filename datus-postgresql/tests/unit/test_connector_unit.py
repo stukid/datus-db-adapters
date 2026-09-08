@@ -723,8 +723,14 @@ def test_get_ddl_uses_requested_database_for_view_queries(object_type):
     assert connector._execute_pandas.call_args.kwargs["database_name"] == "other_db"
 
 
-@pytest.mark.parametrize("index_catalog_error", [None, RuntimeError("index metadata unavailable")])
-def test_get_objects_with_ddl_propagates_metadata_database(index_catalog_error):
+@pytest.mark.parametrize(
+    "index_catalog_error, expected_suffix",
+    [
+        (None, ""),
+        (RuntimeError("index metadata unavailable"), "\n-- Additional unique index metadata is unavailable."),
+    ],
+)
+def test_get_objects_with_ddl_preserves_known_keys_and_database_context(index_catalog_error, expected_suffix):
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector._conn = MagicMock()
     connector._conn.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = []
@@ -744,7 +750,7 @@ def test_get_objects_with_ddl_propagates_metadata_database(index_catalog_error):
 
     def get_ddl(*_args):
         observed_databases.append(connector.database_name)
-        return "CREATE TABLE orders (id INT);"
+        return "CREATE TABLE orders (id INT PRIMARY KEY);"
 
     connector._get_ddl = MagicMock(side_effect=get_ddl)
 
@@ -757,8 +763,7 @@ def test_get_objects_with_ddl_propagates_metadata_database(index_catalog_error):
     )
     assert observed_databases == ["other_db"]
     assert connector.database_name == "default_db"
-    expected = "-- DDL not available for orders" if index_catalog_error else "CREATE TABLE orders (id INT);"
-    assert result[0]["definition"] == expected
+    assert result[0]["definition"] == "CREATE TABLE orders (id INT PRIMARY KEY);" + expected_suffix
 
 
 def test_get_sample_rows_executes_in_requested_database():
