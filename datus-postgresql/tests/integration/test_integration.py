@@ -133,7 +133,7 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
         assert '"id" integer NOT NULL' in definition
         assert f"nextval('{table_name}_id_seq'::regclass)" in definition
         assert '"name" character varying' in definition
-        assert 'PRIMARY KEY ("id")' in definition
+        assert f'CONSTRAINT "{table_name}_pkey" PRIMARY KEY (id)' in definition
     finally:
         connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')
 
