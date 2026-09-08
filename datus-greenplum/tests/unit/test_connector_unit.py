@@ -498,6 +498,10 @@ def test_get_objects_with_ddl_keeps_legacy_override_compatible_for_other_databas
 
     with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
         connector = GreenplumConnector(config)
+        connector._conn = MagicMock()
+        connector._conn.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = [
+            ("CREATE UNIQUE INDEX orders_id ON public.orders USING btree (id)",)
+        ]
         connector._get_metadata = MagicMock(
             return_value=[
                 {
@@ -529,7 +533,9 @@ def test_get_objects_with_ddl_keeps_legacy_override_compatible_for_other_databas
 
     assert observed_databases == ["other_db"]
     assert connector.database_name == "default_db"
-    assert result[0]["definition"].endswith('DISTRIBUTED BY ("id");')
+    assert result[0]["definition"].endswith(
+        'DISTRIBUTED BY ("id");\nCREATE UNIQUE INDEX orders_id ON public.orders USING btree (id);'
+    )
 
 
 # ==================== get_storage_info Tests ====================

@@ -233,7 +233,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         database_name: str = "",
     ) -> str:
         """
-        Get DDL for a table/view using pg_get_tabledef or reconstructing from metadata.
+        Reconstruct table DDL from column and declared constraint metadata, or return view DDL.
 
         Args:
             schema_name: Schema name
@@ -287,7 +287,6 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 return f"-- DDL not available for {full_name}"
 
             col_defs = []
-            pk_cols = []
             for col in columns:
                 col_def = f"    {self.quote_identifier(col['name'])} {col['type']}"
                 if not col.get("nullable", True):
@@ -295,16 +294,51 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 if col.get("default_value"):
                     col_def += f" DEFAULT {col['default_value']}"
                 col_defs.append(col_def)
-                if col.get("pk"):
-                    pk_cols.append(col["name"])
+
+            # Column-level pk flags cannot recover the declared composite-key order.
+            # Let PostgreSQL render constraints, including their names and options.
+            with self._conn(database_name=database_name) as conn:
+                constraints = conn.execute(
+                    text("""
+                        SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+                        FROM pg_catalog.pg_constraint c
+                        JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+                        JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+                        WHERE n.nspname = :schema_name AND t.relname = :table_name
+                          AND c.contype IN ('p', 'u')
+                        ORDER BY c.contype, c.conname
+                    """),
+                    {"schema_name": schema_name, "table_name": table_name},
+                ).fetchall()
+            col_defs.extend(
+                f"    CONSTRAINT {self.quote_identifier(name)} {definition}" for name, definition in constraints
+            )
 
             ddl = f"CREATE TABLE {full_name} (\n"
             ddl += ",\n".join(col_defs)
-            if pk_cols:
-                pk_names = ", ".join(self.quote_identifier(c) for c in pk_cols)
-                ddl += f",\n    PRIMARY KEY ({pk_names})"
             ddl += "\n);"
             return ddl
+
+    def _get_unique_index_definitions(self, schema_name: str, table_name: str, database_name: str = "") -> List[str]:
+        """Read standalone usable unique indexes, retaining predicates and expressions."""
+        with self._conn(database_name=database_name or self.database_name) as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT pg_catalog.pg_get_indexdef(i.indexrelid) AS definition
+                    FROM pg_catalog.pg_index i
+                    JOIN pg_catalog.pg_class t ON t.oid = i.indrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+                    WHERE n.nspname = :schema_name AND t.relname = :table_name
+                      AND i.indisunique AND i.indisvalid AND i.indisready
+                      AND NOT EXISTS (
+                          SELECT 1 FROM pg_catalog.pg_constraint c
+                          WHERE c.conindid = i.indexrelid AND c.contype IN ('p', 'u', 'x')
+                      )
+                    ORDER BY i.indexrelid
+                """),
+                {"schema_name": schema_name, "table_name": table_name},
+            ).fetchall()
+        return [row[0].rstrip().rstrip(";") + ";" for row in rows]
 
     def _get_objects_with_ddl(
         self,
@@ -362,6 +396,12 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                         meta["table_name"],
                         object_type,
                     )
+                    # Append indexes after subclass table clauses (e.g. distribution).
+                    if object_type == "TABLE" and not ddl.startswith("-- DDL not available"):
+                        indexes = self._get_unique_index_definitions(meta["schema_name"], meta["table_name"])
+                        for index_ddl in indexes:
+                            if index_ddl.rstrip(";") not in ddl:
+                                ddl += f"\n{index_ddl}"
                 finally:
                     self._database_var.reset(token)
             except Exception as e:

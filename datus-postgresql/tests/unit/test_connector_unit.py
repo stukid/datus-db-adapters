@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -657,6 +658,60 @@ def test_get_ddl_uses_requested_database_for_table_schema():
     assert '"other_db"."public"."orders"' in ddl
 
 
+@pytest.mark.parametrize(
+    "constraints, expected_constraints",
+    [
+        ([], ""),
+        (
+            [("orders_pk", "PRIMARY KEY (tenant_id, id)"), ('Unique "Email', "UNIQUE (email, tenant_id)")],
+            ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
+            ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)',
+        ),
+    ],
+)
+def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expected_constraints):
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector.dialect = "postgresql"
+    connector._conn = MagicMock()
+    connection = connector._conn.return_value.__enter__.return_value
+    row = namedtuple("SchemaRow", _SCHEMA_COLS)
+    schema_result = MagicMock()
+    schema_result.fetchall.return_value = [
+        row("public", "orders", "id", "integer", "NO", None, True, None),
+        row("public", "orders", "tenant_id", "integer", "NO", None, True, None),
+        row("public", "orders", "email", "text", "YES", None, False, None),
+    ]
+    constraint_result = MagicMock()
+    constraint_result.fetchall.return_value = constraints
+    connection.execute.side_effect = [schema_result, constraint_result]
+
+    ddl = connector._get_ddl("public", "orders", database_name="other_db")
+
+    assert ddl == (
+        'CREATE TABLE "other_db"."public"."orders" (\n'
+        '    "id" integer NOT NULL,\n    "tenant_id" integer NOT NULL,\n    "email" text'
+        f"{expected_constraints}\n);"
+    )
+    assert [call.kwargs["database_name"] for call in connector._conn.call_args_list] == ["other_db", "other_db"]
+    assert connection.execute.call_args.args[1] == {"schema_name": "public", "table_name": "orders"}
+
+
+def test_unique_index_definitions_preserve_predicates_and_bind_identifiers():
+    connector = _make_pg_connector_for_metadata()
+    connector._conn = MagicMock()
+    connection = connector._conn.return_value.__enter__.return_value
+    definition = "CREATE UNIQUE INDEX orders_email ON public.orders USING btree (lower(email)) WHERE active"
+    connection.execute.return_value.fetchall.return_value = [(definition,)]
+
+    assert connector._get_unique_index_definitions("Mixed Schema", "O'Reilly", "other_db") == [definition + ";"]
+    connector._conn.assert_called_once_with(database_name="other_db")
+    statement, params = connection.execute.call_args.args
+    assert params == {"schema_name": "Mixed Schema", "table_name": "O'Reilly"}
+    assert "O'Reilly" not in str(statement)
+    assert "i.indisunique AND i.indisvalid AND i.indisready" in str(statement)
+    assert "c.contype IN ('p', 'u', 'x')" in str(statement)
+
+
 @pytest.mark.parametrize("object_type", ["VIEW", "MATERIALIZED VIEW"])
 def test_get_ddl_uses_requested_database_for_view_queries(object_type):
     connector = _make_pg_connector_for_metadata(database_name="default_db")
@@ -668,8 +723,12 @@ def test_get_ddl_uses_requested_database_for_view_queries(object_type):
     assert connector._execute_pandas.call_args.kwargs["database_name"] == "other_db"
 
 
-def test_get_objects_with_ddl_propagates_metadata_database():
+@pytest.mark.parametrize("index_catalog_error", [None, RuntimeError("index metadata unavailable")])
+def test_get_objects_with_ddl_propagates_metadata_database(index_catalog_error):
     connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector._conn = MagicMock()
+    connector._conn.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = []
+    connector._conn.return_value.__enter__.return_value.execute.side_effect = index_catalog_error
     metadata = [
         {
             "identifier": "other_db.public.orders",
@@ -698,7 +757,8 @@ def test_get_objects_with_ddl_propagates_metadata_database():
     )
     assert observed_databases == ["other_db"]
     assert connector.database_name == "default_db"
-    assert result[0]["definition"] == "CREATE TABLE orders (id INT);"
+    expected = "-- DDL not available for orders" if index_catalog_error else "CREATE TABLE orders (id INT);"
+    assert result[0]["definition"] == expected
 
 
 def test_get_sample_rows_executes_in_requested_database():

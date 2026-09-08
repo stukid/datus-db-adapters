@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -302,6 +302,8 @@ def test_foreign_table_ddl_accepts_array_like_options(connector):
 
 
 def test_bulk_table_ddl_batches_foreign_table_lookup(connector):
+    connector._conn = MagicMock()
+    connector._conn.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = []
     base_metadata = [
         {
             "identifier": "analytics.public.orders",
